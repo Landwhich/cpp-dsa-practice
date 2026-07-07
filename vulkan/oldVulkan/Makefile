@@ -1,12 +1,10 @@
 CXX = clang++
-SHELL = sh
 
 VULKAN_SDK = $(HOME)/VulkanSDK/1.4.341.1/macOS
 BREW_PREFIX = /opt/homebrew
-SLANG_COMPILE_PATH = ./shaders/compile.sh
 
 CFLAGS = \
-	-std=c++20 \
+	-std=c++17 \
 	-O2 \
 	-I$(VULKAN_SDK)/include \
 	-I$(BREW_PREFIX)/include
@@ -27,15 +25,14 @@ export VK_ICD_FILENAMES = $(VULKAN_SDK)/share/vulkan/icd.d/MoltenVK_icd.json
 export VK_LAYER_PATH = $(VULKAN_SDK)/share/vulkan/explicit_layer.d
 
 TARGET = VulkanTest
-COMPILED_SHADERS = shaders/*.spv
 
 $(TARGET): main.cpp
-	$(CXX) $(CFLAGS) -o $(TARGET) main.cpp $(LDFLAGS) && $(SHELL) $(SLANG_COMPILE_PATH)
+	$(CXX) $(CFLAGS) -o $(TARGET) main.cpp $(LDFLAGS)
 
 run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(TARGET) $(COMPILED_SHADERS)
+	rm -f $(TARGET)
 
 .PHONY: run clean
