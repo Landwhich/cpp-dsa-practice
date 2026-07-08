@@ -11,4 +11,5 @@
 # misc / executables
 main
 VulkanTest
+*.swp
 */.venv
