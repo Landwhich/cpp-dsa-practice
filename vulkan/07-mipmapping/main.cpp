@@ -36,8 +36,8 @@ import vulkan_hpp;
 #include <stdexcept>
 #include <vector>
 
-constexpr int WIDTH                 = 400;
-constexpr int HEIGHT                = 700;
+constexpr int WIDTH                 = 40;
+constexpr int HEIGHT                = 70;
 const std::string  MODEL_PATH       = "models/viking_room.obj";
 const std::string  TEXTURE_PATH     = "textures/viking_room.png";
 
