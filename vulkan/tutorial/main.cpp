@@ -8,11 +8,10 @@ import vulkan_hpp;
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
-
-#define TINYOBJLOADER_IMPLEMENTATION
-#include <tiny_obj_loader.h>
+#include <tiny_gltf.h>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -1143,41 +1142,120 @@ private:
     }
 
     void loadModel(){
-		tinyobj::attrib_t                attrib;
-		std::vector<tinyobj::shape_t>    shapes;
-		std::vector<tinyobj::material_t> materials;
+		tinygltf::Model                  model;
+		tinygltf::TinyGLTF               loader;
 		std::string                      warn, err;
 
-		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str()))
-			throw std::runtime_error(warn + err);
+        bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, MODEL_PATH);
 
-        std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+        if (!warn.empty())
+            std::cout << "glTF warning: " << warn << std::endl;
 
-        for (const auto& shape : shapes){
-            for (const auto& index : shape.mesh.indices){
-                Vertex vertex{};
+        if (!err.empty())
+            std::cout << "glTF error: " << err << std::endl;
 
-                vertex.pos = {
-                    attrib.vertices[3 * index.vertex_index + 0],
-                    attrib.vertices[3 * index.vertex_index + 1],
-                    attrib.vertices[3 * index.vertex_index + 2]
-                };
+        if (!ret)
+            throw std::runtime_error("Failed to load glTF model");
 
-                vertex.texCoord = {
-                    attrib.texcoords[2 * index.texcoord_index + 0],
-                    1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
-                };
+        vertices.clear();
+        indices.clear();
 
-                vertex.color = {1.0f, 1.0f, 1.0f};
+        // Process all meshes in the model
+        for (const auto &mesh : model.meshes)
+        {
+            for (const auto &primitive : mesh.primitives)
+            {
+                // Get indices
+                const tinygltf::Accessor   &indexAccessor   = model.accessors[primitive.indices];
+                const tinygltf::BufferView &indexBufferView = model.bufferViews[indexAccessor.bufferView];
+                const tinygltf::Buffer     &indexBuffer     = model.buffers[indexBufferView.buffer];
 
-                auto [it, inserted] = uniqueVertices.insert({vertex, static_cast<uint32_t>(vertices.size())});
-				if (inserted)
+                // Get vertex positions
+                const tinygltf::Accessor   &posAccessor   = model.accessors[primitive.attributes.at("POSITION")];
+                const tinygltf::BufferView &posBufferView = model.bufferViews[posAccessor.bufferView];
+                const tinygltf::Buffer     &posBuffer     = model.buffers[posBufferView.buffer];
+
+                // Get texture coordinates if available
+                bool hasTexCoords = primitive.attributes.find("TEXCOORD_0") != primitive.attributes.end();
+                const tinygltf::Accessor   *texCoordAccessor   = nullptr;
+                const tinygltf::BufferView *texCoordBufferView = nullptr;
+                const tinygltf::Buffer     *texCoordBuffer     = nullptr;
+
+                if (hasTexCoords)
+                {
+                    texCoordAccessor   = &model.accessors[primitive.attributes.at("TEXCOORD_0")];
+                    texCoordBufferView = &model.bufferViews[texCoordAccessor->bufferView];
+                    texCoordBuffer     = &model.buffers[texCoordBufferView->buffer];
+                }
+
+                uint32_t baseVertex = static_cast<uint32_t>(vertices.size());
+
+                for (size_t i = 0; i < posAccessor.count; i++)
+                {
+                    Vertex vertex{};
+
+                    const float *pos = reinterpret_cast<const float *>(
+                        &posBuffer.data[posBufferView.byteOffset + posAccessor.byteOffset + i * 12]
+                    );
+                    // glTF uses a right-handed coordinate system with Y-up
+                    // Vulkan uses a right-handed coordinate system with Y-down
+                    // We need to flip the Y coordinate
+                    vertex.pos = {pos[0], -pos[1], pos[2]};
+
+                    if (hasTexCoords)
+                    {
+                        const float *texCoord = reinterpret_cast<const float *>(
+                            &texCoordBuffer->data[texCoordBufferView->byteOffset + texCoordAccessor->byteOffset + i * 8]
+                        );
+                        vertex.texCoord       = {texCoord[0], texCoord[1]};
+                    }
+                    else
+                        vertex.texCoord = {0.0f, 0.0f};
+
+                    vertex.color = {1.0f, 1.0f, 1.0f};
+
                     vertices.push_back(vertex);
+                }
 
-				indices.push_back(it->second);
+                const unsigned char *indexData   = &indexBuffer.data[indexBufferView.byteOffset + indexAccessor.byteOffset];
+                size_t               indexCount  = indexAccessor.count;
+                size_t               indexStride = 0;
+
+                // Determine index stride based on component type
+                if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+                    indexStride = sizeof(uint16_t);
+                else if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT)
+                    indexStride = sizeof(uint32_t);
+                else if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+                    indexStride = sizeof(uint8_t);
+                else
+                    throw std::runtime_error("Unsupported index component type");
+
+                indices.reserve(indices.size() + indexCount);
+
+                for (size_t i = 0; i < indexCount; i++)
+                {
+                    uint32_t index = 0;
+
+                    if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+                    {
+                        index = *reinterpret_cast<const uint16_t *>(indexData + i * indexStride);
+                    }
+                    else if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT)
+                    {
+                        index = *reinterpret_cast<const uint32_t *>(indexData + i * indexStride);
+                    }
+                    else if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+                    {
+                        index = *reinterpret_cast<const uint8_t *>(indexData + i * indexStride);
+                    }
+
+                    indices.push_back(baseVertex + index);
+                }
             }
         }
     }
+
 
     void createSwapChain(){
 		vk::SurfaceCapabilitiesKHR surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(*surface);
